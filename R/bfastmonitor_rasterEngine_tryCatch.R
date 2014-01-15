@@ -1,9 +1,13 @@
-bfastmonitor_rasterEngine <-
+bfastmonitor_rasterEngine_tryCatch <-
 function(x, startperiod, endperiod=NULL, dates=NULL, cpus="max", sensor="all", formula=response ~ trend + harmon,
                                       order=3, lag=NULL, slag=NULL, history=c("ROC", "BP", "all"),
                                       type="OLS-MOSUM", h=0.25, end=10, level=0.05, datetype=c("16-day", "irregular"),
-                                      data_multiplier=1, filename="")
+                                      data_multiplier=1, printErrors=TRUE, logfile=NULL, filename="")
 {
+  # Same as bfmastmonitor_rasterEngine() function, but applies bfastmonitor() on each pixel within a tryCatch().
+  # If an error is encountered (e.g. lack of data in the history period), -9999 is assigned to breakpoint and magnitude for that pixel,
+  # the error is printed to the console (or logfile) and processing continues. If desired, the user can create an error 'mask' by extracting these pixel values after processing.
+  
   # args:
     # x - rasterBrick to be analyzed
     # startperiod - start of the monitoring period (e.g. c(2009, 1))
@@ -14,6 +18,9 @@ function(x, startperiod, endperiod=NULL, dates=NULL, cpus="max", sensor="all", f
       # possible values: c("all", "TM", "ETM+", "ETM+ SLC-on", "ETM+ SLC-off")
     # including other arguments for bfastmonitor() ...
     # data_multiplier - data rescaling factor; leave as 1 if not necessary
+    # printErrors - print error messages to a log file? If TRUE, will be printed to a file called "log.txt" saved in the current working directory.
+      # NOTE: printErrors is not yet supported unless a logfile is provided in the arguments, as 'regular' prints to the console in foreach() are not possible
+    # logfile - filename for error messages (if printErrors=TRUE). If NULL, messages will be print to console.
     # filename - (optional) filename if resulting rasterBrick is to be written to file
   
   # modify Landsat time series if preferred sensor is indicated
@@ -42,14 +49,26 @@ function(x, startperiod, endperiod=NULL, dates=NULL, cpus="max", sensor="all", f
     npixels <- prod(dim(rasterTS)[1:2])
     ndates <- dim(rasterTS)[3]
     dim(rasterTS) <- c(npixels, ndates)
-    
+
+    if(printErrors & !is.null(logfile))
+      sink(logfile, append=TRUE)
+        
     bfm_out <- foreach(i=seq(npixels), .packages=c("bfast"), .combine=rbind) %do% {
       bfts <- bfastts(rasterTS[i,], dates=dates, type=datetype)
       # trim time series using endperiod
       if(!is.null(endperiod))
         bfts <- window(bfts, end=endperiod)
+  
+      bfm <- tryCatch({
+        x <- bfastmonitor(data=bfts, start=start, formula=formula, order=order, lag=lag, 
+                            slag=slag, history=history, type=type, h=h, end=end, level=level)
+      }, error = function(err) {
+        if(printErrors)
+          cat("Error encountered at iteration ", i, ":\n", as.character(err), "\n", sep="")
+        x <- list(breakpoint = -9999, magnitude = -9999)
+        return(x)
+      })
       
-      bfm <- bfastmonitor(data=bfts, start=start, formula=formula, order=order, lag=lag, slag=slag, history=history, type=type, h=h, end=end, level=level)
       return(c(bfm$breakpoint, bfm$magnitude)) 
     }
     
@@ -58,6 +77,9 @@ function(x, startperiod, endperiod=NULL, dates=NULL, cpus="max", sensor="all", f
          
     return(bfm_out)
   }
+  
+  if(printErrors & !is.null(logfile))
+    sink()
   
   # get dates from previous getSceneinfo() data.frame if dates was not supplied in arguments
   if(is.null(dates))
