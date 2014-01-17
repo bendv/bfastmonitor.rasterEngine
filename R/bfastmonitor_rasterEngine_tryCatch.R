@@ -54,21 +54,30 @@ function(x, startperiod, endperiod=NULL, dates=NULL, cpus="max", sensor="all", f
       sink(logfile, append=TRUE)
         
     bfm_out <- foreach(i=seq(npixels), .packages=c("bfast"), .combine=rbind) %do% {
-      bfts <- bfastts(rasterTS[i,], dates=dates, type=datetype)
-      # trim time series using endperiod
-      if(!is.null(endperiod))
-        bfts <- window(bfts, end=endperiod)
-  
-      bfm <- tryCatch({
-        x <- bfastmonitor(data=bfts, start=start, formula=formula, order=order, lag=lag, 
-                            slag=slag, history=history, type=type, h=h, end=end, level=level)
-      }, error = function(err) {
-        if(printErrors)
-          cat("Error encountered at iteration ", i, ":\n", as.character(err), "\n", sep="")
-        x <- list(breakpoint = -9999, magnitude = -9999)
-        return(x)
-      })
-      
+      # if there are no values in the ts vector, assign NA's and move on
+      # e.g. if the input brick has had a mask applied already
+      testNA <- length(rasterTS[i, ][!is.na(rasterTS[i, ])])
+      if(testNA > 0){
+        
+        bfts <- bfastts(rasterTS[i,], dates=dates, type=datetype)
+        # trim time series using endperiod
+        if(!is.null(endperiod))
+          bfts <- window(bfts, end=endperiod)
+    
+        bfm <- tryCatch({
+          x <- bfastmonitor(data=bfts, start=start, formula=formula, order=order, lag=lag, 
+                              slag=slag, history=history, type=type, h=h, end=end, level=level)
+        }, error = function(err) {
+          if(printErrors)
+            cat("Error encountered at iteration ", i, ":\n", as.character(err), "\n", sep="")
+          x <- list(breakpoint = -9999, magnitude = -9999)
+          return(x)
+        })
+        
+      } else {
+        
+        bfm <- list(breakpoint = NA, magnitude = NA)
+      }
       return(c(bfm$breakpoint, bfm$magnitude)) 
     }
     
